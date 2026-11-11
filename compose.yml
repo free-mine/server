@@ -1,0 +1,29 @@
+services:
+  server:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      RPC_URL: ${RPC_URL:-https://api.avax.network/ext/bc/C/rpc}
+      PORT: 3000
+      DATA_DIR: /app/data
+      OWNER_KEY_HASH_FILE: /app/secrets/owner-key.sha256
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-3600000}
+      LOG_BATCH_SIZE: ${LOG_BATCH_SIZE:-2000}
+      RPC_TIMEOUT_MS: ${RPC_TIMEOUT_MS:-30000}
+      CHAIN_CONFIG_FILE: ${CHAIN_CONFIG_FILE:-}
+    volumes:
+      - data:/app/data
+      - ./secrets:/app/secrets:ro
+      - ./config:/app/config:ro
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  data:
