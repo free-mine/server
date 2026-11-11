@@ -1,0 +1,8 @@
+extends:
+  - recommended-strict
+
+rules:
+  # Public read endpoints have no client-error conditions in the HTTP contract.
+  operation-4xx-response: off
+  # Local development is supported; the deployed API hostname is user-configured.
+  no-server-example.com: off

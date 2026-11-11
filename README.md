@@ -161,4 +161,38 @@ curl --fail http://localhost:3000/v1/backup --output backup.json.gz
 
 Требуется Node.js 24. `npm ci`, затем `npm run dev` для запуска с `.env`.
 `npm run key:generate` создаёт ключ локально. `npm run check` проверяет типы,
-ESLint, тесты и сборку. Тесты работают без RPC.
+ESLint, OpenAPI, форматирование документации и workflows, тесты и сборку.
+Тесты работают без RPC. Отдельная проверка документации: `npm run docs:lint`.
+
+## Swagger и GitHub Actions
+
+Техническая документация API находится в [`swagger/openapi.yml`](swagger/openapi.yml).
+[`swagger/index.html`](swagger/index.html) отображает её в Swagger UI: эндпоинты,
+схемы данных, примеры, авторизация, ошибки и правила работы с ревизиями.
+При изменении HTTP API обновляйте спецификацию в том же Pull Request.
+
+Для локального просмотра раздайте каталог `swagger` любым статическим HTTP-сервером,
+например `python -m http.server 8080 --directory swagger`, и откройте
+`http://localhost:8080`. Открытие HTML через `file://` не позволяет загрузить YAML.
+CSS и JavaScript Swagger UI загружаются с CDN; версия закреплена, файлы проверяются
+браузером по integrity-хешам.
+
+В Swagger UI выберите сервер и используйте **Try it out** для запросов.
+Для удалённого сервера укажите его HTTPS-адрес; GitHub Pages размещает только
+документацию. Для запросов владельца в **Authorize** введите ключ без префикса
+`Bearer`. Ключ не сохраняется между перезагрузками страницы.
+
+Для публикации один раз выберите в репозитории **Settings → Pages → Build and
+deployment → Source → GitHub Actions**. Workflow `Swagger Pages` публикует
+каталог `swagger` после успешных проверок при каждом push в `main`.
+Его также можно запустить вручную для `main` через **Actions → Swagger Pages →
+Run workflow**. Ожидаемый адрес: <https://free-mine.github.io/server/>;
+точный URL появляется в deployment окружения `github-pages`.
+Дополнительные секреты для публикации не нужны.
+
+Workflow `CI` проверяет Pull Requests: установка через `npm ci`, типы TypeScript,
+ESLint без предупреждений, валидность OpenAPI, форматирование документации и
+workflows, тесты, сборка TypeScript и Docker. Эти же проверки обязательны для
+workflow публикации. RPC и ключ владельца для CI не требуются.
+GitHub Actions закреплены по SHA релизов с Node.js 24; Dependabot еженедельно
+предлагает их обновления.

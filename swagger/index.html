@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Техническая документация HTTP API Free Mine: состояние контрактов, портфель, бэкап и записи транзакций владельца."
+    />
+    <title>Free Mine API — Swagger</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.1/swagger-ui.css"
+      integrity="sha384-4c3vsE5f+trhFyHrFrLM1fFGUn531NIaC7dcqEWIJdoRQJ5CkJbSuSCwXLpaS1KF"
+      crossorigin="anonymous"
+    />
+    <style>
+      body {
+        margin: 0;
+        background: #fafafa;
+        color: #3b4151;
+        font-family: system-ui, sans-serif;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1rem max(20px, calc((100vw - 1420px) / 2));
+        background: #172b3a;
+        color: #fff;
+      }
+
+      header a {
+        color: #fff;
+        text-underline-offset: 0.2em;
+      }
+
+      .notice {
+        margin: 2rem 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Free Mine · HTTP API v1</strong>
+      <a href="./openapi.yml" download>Скачать OpenAPI</a>
+    </header>
+    <main id="swagger-ui" aria-label="Документация API">
+      <p class="notice">Загрузка документации…</p>
+    </main>
+    <noscript>
+      <p class="notice">
+        Для Swagger UI нужен JavaScript. Спецификация доступна по ссылке
+        <a href="./openapi.yml">openapi.yml</a>.
+      </p>
+    </noscript>
+    <script
+      src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.34.1/swagger-ui-bundle.js"
+      integrity="sha384-XFYN47VzPiDY6qPtxYKg0nqUeW/upo20xf1j2SUE7gT/i35FJB4cuS/71Iegzk8Z"
+      crossorigin="anonymous"
+    ></script>
+    <script>
+      if (typeof SwaggerUIBundle === 'function') {
+        SwaggerUIBundle({
+          url: './openapi.yml',
+          dom_id: '#swagger-ui',
+          deepLinking: true,
+          displayRequestDuration: true,
+          filter: true,
+          defaultModelsExpandDepth: 0,
+          persistAuthorization: false,
+          queryConfigEnabled: false,
+          validatorUrl: null,
+        })
+      } else {
+        document.getElementById('swagger-ui').textContent =
+          'Не удалось загрузить Swagger UI с CDN. Спецификацию можно скачать по ссылке выше.'
+      }
+    </script>
+  </body>
+</html>

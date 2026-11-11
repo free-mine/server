@@ -1,0 +1,1090 @@
+openapi: 3.1.0
+info:
+  title: Free Mine Public Server API
+  version: 1.0.0
+  description: |
+    HTTP API сервера Free Mine для Avalanche C-Chain (`chainId: 43114`).
+    Сервер агрегирует состояние MagicOre, FreeMine, OreVein и портфель OreVein
+    в Aave и Uniswap V3. Отдельно хранится приватный журнал транзакций владельца.
+
+    ### Снимок и обновление
+    Все данные снимка относятся к одному блоку. Обновление запускается при старте,
+    затем раз в час (фактический интервал возвращается в `GET /v1/status`)
+    и по запросу владельца. Параллельные запросы используют одну синхронизацию.
+    При ошибке предыдущий снимок остаётся доступным; до первого успешного снимка
+    `/v1/state` и `/v1/backup` возвращают `503`. История снимков не хранится.
+
+    ### Форматы данных
+    Суммы в минимальных единицах токена и идентификаторы контрактов передаются
+    десятичными строками, чтобы не терять точность JavaScript Number.
+    Для отображения суммы делите её на `10 ** decimals` с точной арифметикой.
+    Цены входа FreeMine имеют 18 знаков. Цены и границы Uniswap, а также Health
+    Factor Aave — обычные десятичные строки без дополнительного масштабирования.
+    Время блока — Unix seconds (число), время из контрактов — Unix seconds
+    (строка), время действий сервера — ISO 8601 UTC.
+    Адреса в `chain` и `fund` приведены к нижнему регистру; в `portfolio`
+    регистр может отличаться.
+
+    ### Доступ
+    Публичные методы не требуют авторизации. Методы владельца принимают
+    `Authorization: Bearer <ключ>`; это серверный секрет, не JWT и не подпись
+    кошелька. Ключ создаётся командой `npm run key:generate` либо
+    `docker compose exec server node dist/cli/key.js`. Сервер хранит SHA-256
+    ключа и перечитывает файл при каждом запросе: ротация не требует перезапуска.
+    Передавайте ключ через HTTPS, кроме локальной разработки.
+    Все ответы методов владельца имеют `Cache-Control: no-store`.
+
+    CORS разрешает любой origin; браузеру доступны заголовки `ETag` и
+    `Content-Disposition`. Максимальное тело запроса — 1 MiB (1048576 байт).
+    Журнал принимает JSON-объекты клиента: сервер не подписывает, не отправляет
+    в сеть и не проверяет блокчейн-транзакции.
+  license:
+    name: MIT
+    identifier: MIT
+  contact:
+    name: Free Mine
+    url: https://github.com/free-mine/server
+servers:
+  - url: http://localhost:3000
+    description: Локальный сервер (порт по умолчанию)
+  - url: https://{host}
+    description: Ваш развёрнутый сервер; укажите его HTTPS-хост
+    variables:
+      host:
+        default: api.example.com
+        description: Хост вашего API, при необходимости с портом; без https:// и завершающего слеша
+security: []
+tags:
+  - name: Public
+    description: Публичное состояние, статус синхронизации и резервная копия
+  - name: Owner
+    description: Управление синхронизацией с ключом владельца
+  - name: Transactions
+    description: Приватный журнал JSON-записей с оптимистической блокировкой по ревизии
+paths:
+  /v1/status:
+    get:
+      tags: [Public]
+      operationId: getStatus
+      summary: Получить статус синхронизации
+      description: |
+        Доступен в том числе до первого снимка и после ошибки RPC.
+        `running` показывает выполняющееся обновление. `lastError` содержит
+        безопасное общее сообщение без RPC-адреса, ключей и внутренних деталей.
+        Наличие старого снимка не означает, что последнее обновление успешно:
+        проверяйте `lastError`, `updatedAt` и `block`.
+      responses:
+        '200':
+          description: Текущее состояние синхронизации и метаданные последнего снимка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+              examples:
+                initial:
+                  summary: До первой попытки обновления
+                  value:
+                    running: false
+                    lastAttemptAt: null
+                    lastError: null
+                    block: null
+                    updatedAt: null
+                    intervalMs: 3600000
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/state:
+    get:
+      tags: [Public]
+      operationId: getState
+      summary: Получить публичный снимок
+      description: |
+        Возвращает последний целиком сохранённый снимок. Во время обновления
+        доступен предыдущий снимок. `portfolio.blockNumber` равен `block.number`.
+        Приватные записи транзакций, ключ владельца и его хеш сюда не входят.
+      responses:
+        '200':
+          description: Публичный снимок одного блока Avalanche C-Chain
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoCache'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicSnapshot'
+        '503':
+          $ref: '#/components/responses/SnapshotUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/backup:
+    get:
+      tags: [Public]
+      operationId: downloadBackup
+      summary: Скачать публичный снимок в gzip
+      description: |
+        Содержимое после распаковки — тот же JSON `PublicSnapshot`, что и
+        в `/v1/state`. Это файл gzip, а не HTTP Content-Encoding.
+        `Content-Disposition` задаёт имя `free-mine-backup.json.gz`.
+        Журнал транзакций и хеш ключа владельца не входят в архив.
+
+        Для восстановления остановите сервер, сохраните предыдущий файл и
+        поместите доверенную копию в `data/public-snapshot.json.gz`, затем
+        запустите сервер. При старте проверяются формат, сеть, адреса и
+        согласованность данных; следующая синхронизация проверит хеш сохранённого
+        блока в RPC и продолжит чтение событий после него.
+      responses:
+        '200':
+          description: Gzip-файл, содержащий JSON по схеме PublicSnapshot
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoCache'
+            Content-Disposition:
+              description: Имя скачиваемого файла
+              schema:
+                type: string
+                const: 'attachment; filename="free-mine-backup.json.gz"'
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '503':
+          $ref: '#/components/responses/SnapshotUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/refresh:
+    post:
+      tags: [Owner]
+      operationId: refreshState
+      summary: Запустить обновление снимка
+      security:
+        - ownerKey: []
+      description: |
+        Возвращает `202` сразу, без ожидания RPC и сохранения снимка.
+        Если обновление уже выполняется, используется существующая операция.
+        Тело запроса не требуется. `202` подтверждает принятие запроса,
+        а не успешное завершение обновления: следите за `/v1/status`.
+      responses:
+        '202':
+          description: Обновление запущено или уже выполняется
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshAccepted'
+              example:
+                status: accepted
+                running: true
+                lastAttemptAt: '2026-11-11T12:00:00.000Z'
+                lastError: null
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/transactions:
+    get:
+      tags: [Transactions]
+      operationId: listTransactions
+      summary: Получить все записи владельца
+      security:
+        - ownerKey: []
+      description: |
+        Возвращает полный журнал без пагинации и фильтров.
+        Для условной записи используйте ревизию нужной записи:
+        `If-Match: "<revision>"`. У всего списка общего ETag нет.
+      responses:
+        '200':
+          description: Все сохранённые записи, включая их ревизии
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [records]
+                properties:
+                  records:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TransactionRecord'
+              example:
+                records: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/transactions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    get:
+      tags: [Transactions]
+      operationId: getTransaction
+      summary: Получить запись и её ETag
+      security:
+        - ownerKey: []
+      description: |
+        Возвращает запись и заголовок ETag с её ревизией в двойных кавычках.
+        Сохраните ETag и передайте его как `If-Match` при замене или удалении.
+      responses:
+        '200':
+          $ref: '#/components/responses/Transaction'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Запись с таким ID отсутствует
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Record not found
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Transactions]
+      operationId: putTransaction
+      summary: Создать или полностью заменить запись
+      security:
+        - ownerKey: []
+      description: |
+        Тело — сам JSON-объект клиента, без обёртки `data`. Пустой объект допустим;
+        массивы, скаляры и `null` на верхнем уровне не принимаются.
+        Это полная замена: отсутствующие в новом объекте поля не сохраняются.
+
+        Для создания передайте только `If-None-Match: *` — ответ `201`.
+        Для замены передайте только `If-Match` с актуальным ETag — ответ `200`.
+        Ровно один из этих заголовков обязателен. Одновременная передача обоих,
+        отсутствие условия, слабый ETag, `*` в If-Match или список ETag дают `428`.
+        Число ревизии, выходящее за пределы безопасного целого, даёт `400`.
+
+        При существующей записи на создании, отсутствующей записи на замене
+        или несовпадении ревизии возвращается `412`. Прочитайте запись заново
+        и согласуйте изменения перед повторной попыткой.
+        Успешный ответ возвращается после сохранения на диск.
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        description: JSON-объект клиента; всё HTTP-тело не больше 1048576 байт
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionData'
+            examples:
+              submitted:
+                summary: Произвольные данные транзакции
+                value:
+                  hash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                  status: submitted
+              empty:
+                summary: Пустая запись
+                value: {}
+      responses:
+        '200':
+          $ref: '#/components/responses/Transaction'
+        '201':
+          description: Запись создана и сохранена; возвращена её новая ревизия
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            ETag:
+              $ref: '#/components/headers/RevisionETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionRecord'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '412':
+          $ref: '#/components/responses/RevisionConflict'
+        '413':
+          description: Тело запроса превышает 1 MiB (1048576 байт)
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Invalid request
+        '415':
+          description: Неподдерживаемый Content-Type; используйте application/json
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Invalid request
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Transactions]
+      operationId: deleteTransaction
+      summary: Удалить запись с проверкой ревизии
+      security:
+        - ownerKey: []
+      description: |
+        Передайте актуальный ETag записи в `If-Match`, включая двойные кавычки.
+        `If-None-Match` не допускается. Отсутствующее или неверно оформленное
+        условие даёт `428`; ревизия вне диапазона безопасного целого — `400`.
+        При неверной ревизии или отсутствии записи возвращается `412`.
+        После сохранения удаления на диск возвращается `204` без тела.
+        Повторное создание того же ID получает новую ревизию, поэтому прежний
+        ETag не сможет изменить заново созданную запись.
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: Актуальная ревизия в двойных кавычках, полученная из ETag
+          schema:
+            $ref: '#/components/schemas/RevisionETag'
+      responses:
+        '204':
+          description: Запись удалена, тело ответа отсутствует
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '412':
+          $ref: '#/components/responses/RevisionConflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    ownerKey:
+      type: http
+      scheme: bearer
+      description: Секретный серверный ключ владельца; в поле Authorize вводится только ключ, без префикса Bearer
+  parameters:
+    TransactionId:
+      name: id
+      in: path
+      required: true
+      description: ID записи, выбранный клиентом; не обязан быть хешем транзакции
+      schema:
+        $ref: '#/components/schemas/TransactionId'
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: Для создания укажите * и не передавайте If-Match
+      schema:
+        type: string
+        const: '*'
+    IfMatch:
+      name: If-Match
+      in: header
+      description: Для замены передайте текущий ETag и не передавайте If-None-Match
+      schema:
+        $ref: '#/components/schemas/RevisionETag'
+  headers:
+    NoCache:
+      description: Снимок может обновиться; кэш требует перепроверки
+      schema:
+        type: string
+        const: no-cache
+    NoStore:
+      description: Ответ владельца не должен сохраняться в кэшах
+      schema:
+        type: string
+        const: no-store
+    RevisionETag:
+      description: Ревизия записи в двойных кавычках; используйте как If-Match
+      schema:
+        $ref: '#/components/schemas/RevisionETag'
+  responses:
+    Transaction:
+      description: Сохранённая запись с актуальной ревизией
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        ETag:
+          $ref: '#/components/headers/RevisionETag'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TransactionRecord'
+          example:
+            id: operation-123
+            revision: 1
+            updatedAt: '2026-11-11T12:00:00.000Z'
+            data:
+              hash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+              status: submitted
+    InvalidRequest:
+      description: Неверный ID, тело, ревизия вне допустимого диапазона или некорректный JSON
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            validation:
+              value:
+                error: Invalid request data
+            malformed:
+              value:
+                error: Invalid request
+    Unauthorized:
+      description: Ключ отсутствует, неверен либо файл хеша отсутствует или повреждён
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        WWW-Authenticate:
+          description: Требуется Bearer-аутентификация
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Unauthorized
+    SnapshotUnavailable:
+      description: Первый публичный снимок ещё не сохранён
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Initial synchronization has not completed
+    StorageUnavailable:
+      description: |
+        Журнал недоступен. После сбоя сохранения сервер блокирует дальнейшее
+        чтение и запись журнала до перезапуска; проверьте каталог данных.
+        Публичный снимок продолжает обслуживаться независимо от журнала.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Transaction storage is unavailable; restart after checking the data volume
+    RevisionConflict:
+      description: Запись уже существует при создании, отсутствует при изменении/удалении либо её ревизия изменилась
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Revision changed or record does not exist; read the current record and retry
+    PreconditionRequired:
+      description: Отсутствует корректное условие либо одновременно переданы If-Match и If-None-Match
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: 'Use If-None-Match: * to create, or If-Match: "revision" to update/delete'
+    InternalError:
+      description: Непредвиденная ошибка сервера; внутренние подробности не раскрываются
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Internal server error
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Сообщение об ошибке; используйте HTTP-код для программной обработки
+    Address:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{40}$'
+      description: EVM-адрес (20 байт); нулевой адрес допустим, если не оговорено иное
+      examples: ['0xe757a8b1d003bc8704de110c8458b5358db12070']
+    LowercaseAddress:
+      type: string
+      pattern: '^0x[0-9a-f]{40}$'
+      description: EVM-адрес в нижнем регистре
+      examples: ['0xe757a8b1d003bc8704de110c8458b5358db12070']
+    Hash:
+      type: string
+      pattern: '^0x[0-9a-f]{64}$'
+      description: Хеш длиной 32 байта в нижнем регистре
+    Units:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      description: Неотрицательное целое в десятичной записи без ведущих нулей
+      examples: ['1000000000000000000']
+    Uint256:
+      $ref: '#/components/schemas/Units'
+      maxLength: 78
+      description: |
+        Каноническая десятичная строка uint256, от 0 до
+        115792089237316195423570985008687907853269984665640564039457584007913129639935.
+        Сервер дополнительно проверяет верхнюю границу значения.
+    PositiveUint256:
+      $ref: '#/components/schemas/Uint256'
+      pattern: '^[1-9][0-9]*$'
+      description: Положительная каноническая десятичная строка uint256
+    Decimal:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)(\.[0-9]+)?$'
+      description: Неотрицательное десятичное число без экспоненты; не требует деления на 10 ** decimals
+      examples: ['25.125']
+    RevisionETag:
+      type: string
+      pattern: '^"[1-9][0-9]*"$'
+      description: Сильный ETag с положительной целой ревизией не больше 9007199254740991
+      examples: ['"1"']
+    TransactionId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+      examples: [operation-123]
+    TransactionData:
+      type: object
+      additionalProperties: true
+      description: Произвольный JSON-объект; значения могут быть любыми JSON-значениями, включая вложенные объекты, массивы и null
+    TransactionRecord:
+      type: object
+      additionalProperties: false
+      required: [id, revision, updatedAt, data]
+      properties:
+        id:
+          $ref: '#/components/schemas/TransactionId'
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+          description: Глобально возрастающая ревизия журнала; новая при каждом PUT, не сбрасывается при удалении ID
+        updatedAt:
+          type: string
+          format: date-time
+          description: Время последнего сохранения записи сервером, UTC
+        data:
+          $ref: '#/components/schemas/TransactionData'
+    SyncStatus:
+      type: object
+      required: [running, lastAttemptAt, lastError]
+      properties:
+        running:
+          type: boolean
+          description: Выполняется ли синхронизация
+        lastAttemptAt:
+          type: [string, 'null']
+          format: date-time
+          description: Начало последней попытки обновления в UTC; null до первой попытки
+        lastError:
+          type: [string, 'null']
+          description: Общее сообщение последней ошибки; сбрасывается в null при начале новой попытки
+    Status:
+      allOf:
+        - $ref: '#/components/schemas/SyncStatus'
+        - type: object
+          required: [block, updatedAt, intervalMs]
+          properties:
+            block:
+              description: Блок последнего снимка; null до первого снимка
+              anyOf:
+                - $ref: '#/components/schemas/Block'
+                - type: 'null'
+            updatedAt:
+              type: [string, 'null']
+              format: date-time
+              description: Время сохранения последнего снимка в UTC; null до первого снимка
+            intervalMs:
+              type: integer
+              minimum: 1
+              description: Настроенный период автоматической синхронизации в миллисекундах
+              examples: [3600000]
+      unevaluatedProperties: false
+    RefreshAccepted:
+      allOf:
+        - $ref: '#/components/schemas/SyncStatus'
+        - type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              const: accepted
+      unevaluatedProperties: false
+    Block:
+      type: object
+      additionalProperties: false
+      required: [number, hash, timestamp]
+      properties:
+        number:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Номер блока, к которому относятся данные снимка
+        hash:
+          $ref: '#/components/schemas/Hash'
+        timestamp:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Время блока, Unix seconds
+    Chain:
+      type: object
+      additionalProperties: false
+      required: [chainId, deploymentTx, magicOre, freeMine, oreVein]
+      properties:
+        chainId:
+          type: integer
+          const: 43114
+          description: Avalanche C-Chain mainnet
+        deploymentTx:
+          $ref: '#/components/schemas/Hash'
+          description: Успешная транзакция деплоя, с блока которой начинается первичная индексация
+        magicOre:
+          $ref: '#/components/schemas/LowercaseAddress'
+        freeMine:
+          $ref: '#/components/schemas/LowercaseAddress'
+        oreVein:
+          $ref: '#/components/schemas/LowercaseAddress'
+    PublicSnapshot:
+      type: object
+      additionalProperties: false
+      required: [format, chain, block, updatedAt, fund, portfolio]
+      properties:
+        format:
+          type: integer
+          const: 1
+          description: Версия формата сохраняемого снимка
+        chain:
+          $ref: '#/components/schemas/Chain'
+        block:
+          $ref: '#/components/schemas/Block'
+        updatedAt:
+          type: string
+          format: date-time
+          description: Время формирования успешно сохранённого снимка, UTC
+        fund:
+          $ref: '#/components/schemas/Fund'
+        portfolio:
+          $ref: '#/components/schemas/Portfolio'
+    Fund:
+      type: object
+      additionalProperties: false
+      required: [magicOre, oreVein, freeMine]
+      properties:
+        magicOre:
+          $ref: '#/components/schemas/MagicOre'
+        oreVein:
+          $ref: '#/components/schemas/OreVein'
+        freeMine:
+          $ref: '#/components/schemas/FreeMine'
+    MagicOre:
+      type: object
+      additionalProperties: false
+      required: [name, owner, symbol, decimals, totalSupply, holders]
+      properties:
+        name:
+          type: string
+          description: Имя ERC-20 токена
+        owner:
+          $ref: '#/components/schemas/LowercaseAddress'
+        symbol:
+          type: string
+          description: Символ ERC-20 токена
+        decimals:
+          type: integer
+          const: 18
+        totalSupply:
+          $ref: '#/components/schemas/Uint256'
+          description: Общий выпуск в минимальных единицах MagicOre; равен сумме holders
+        holders:
+          type: object
+          description: Адрес → положительный баланс MagicOre; нулевые балансы и нулевой адрес отсутствуют
+          propertyNames:
+            $ref: '#/components/schemas/LowercaseAddress'
+          additionalProperties:
+            $ref: '#/components/schemas/PositiveUint256'
+    OreVein:
+      type: object
+      additionalProperties: false
+      required: [owner, pendingOwner, freeMine, contractURI, admins, successors]
+      properties:
+        owner:
+          $ref: '#/components/schemas/LowercaseAddress'
+        pendingOwner:
+          $ref: '#/components/schemas/LowercaseAddress'
+          description: Ожидающий владелец из контракта; нулевой адрес означает отсутствие кандидата
+        freeMine:
+          $ref: '#/components/schemas/LowercaseAddress'
+          description: Связанный FreeMine; совпадает с chain.freeMine
+        contractURI:
+          type: string
+          description: Значение contractURI из контракта; может быть пустой строкой
+        admins:
+          type: array
+          uniqueItems: true
+          description: Администраторы без владельца и нулевого адреса, отсортированные по адресу
+          items:
+            $ref: '#/components/schemas/LowercaseAddress'
+        successors:
+          type: object
+          description: |
+            Адрес → Unix seconds, с которого преемник вправе вызвать
+            claimPrivileges. Наступление времени не передаёт полномочия автоматически.
+          propertyNames:
+            $ref: '#/components/schemas/LowercaseAddress'
+          additionalProperties:
+            $ref: '#/components/schemas/PositiveUint256'
+    FreeMine:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          owner,
+          magicOre,
+          entryPrice,
+          priceUpdatedAt,
+          currentShiftId,
+          dollar,
+          claims,
+          shifts,
+        ]
+      properties:
+        owner:
+          $ref: '#/components/schemas/LowercaseAddress'
+        magicOre:
+          $ref: '#/components/schemas/LowercaseAddress'
+          description: Связанный MagicOre; совпадает с chain.magicOre
+        entryPrice:
+          $ref: '#/components/schemas/Uint256'
+          description: Цена входа из контракта с 18 десятичными знаками
+        priceUpdatedAt:
+          $ref: '#/components/schemas/Uint256'
+          description: Время обновления цены, Unix seconds в строке
+        currentShiftId:
+          $ref: '#/components/schemas/PositiveUint256'
+        dollar:
+          type: object
+          additionalProperties: false
+          required: [address, decimals]
+          properties:
+            address:
+              $ref: '#/components/schemas/LowercaseAddress'
+            decimals:
+              type: integer
+              minimum: 0
+              maximum: 18
+        claims:
+          type: object
+          description: |
+            Активные заявки; ключ имеет вид shiftId:claimId и совпадает с полями
+            заявки. Заблокированные MagicOre находятся на балансе FreeMine,
+            принадлежность заявки пользователю определяется полем miner.
+          propertyNames:
+            type: string
+            pattern: '^[1-9][0-9]*:[1-9][0-9]*$'
+          additionalProperties:
+            $ref: '#/components/schemas/Claim'
+        shifts:
+          type: object
+          description: Текущая, предыдущая и более ранние смены с активными заявками; ключ — ID смены
+          propertyNames:
+            $ref: '#/components/schemas/Uint256'
+          additionalProperties:
+            $ref: '#/components/schemas/Shift'
+    Claim:
+      type: object
+      additionalProperties: false
+      required: [miner, shiftId, claimId, oreAmount]
+      properties:
+        miner:
+          $ref: '#/components/schemas/LowercaseAddress'
+          description: Ненулевой адрес владельца заявки
+        shiftId:
+          $ref: '#/components/schemas/PositiveUint256'
+        claimId:
+          $ref: '#/components/schemas/PositiveUint256'
+        oreAmount:
+          $ref: '#/components/schemas/PositiveUint256'
+          description: Заблокированное количество MagicOre в минимальных единицах (18 decimals)
+    Shift:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          funded,
+          price,
+          dollar,
+          fundedAt,
+          oreAmount,
+          dollarScale,
+          currentClaimId,
+        ]
+      description: |
+        Текущая смена не профинансирована. У непрофинансированной смены
+        price, fundedAt и dollarScale равны строке "0", dollar — нулевой адрес.
+        oreAmount равен сумме oreAmount активных заявок этой смены.
+      properties:
+        funded:
+          type: boolean
+        price:
+          $ref: '#/components/schemas/Uint256'
+          description: Цена, сохранённая контрактом для профинансированной смены
+        dollar:
+          $ref: '#/components/schemas/LowercaseAddress'
+          description: Долларовый токен, сохранённый при финансировании
+        fundedAt:
+          $ref: '#/components/schemas/Uint256'
+          description: Время финансирования, Unix seconds в строке; "0" до финансирования
+        oreAmount:
+          $ref: '#/components/schemas/Uint256'
+          description: MagicOre в активных заявках смены, в минимальных единицах
+        dollarScale:
+          $ref: '#/components/schemas/Uint256'
+          description: Масштаб долларового токена, сохранённый контрактом для смены
+        currentClaimId:
+          $ref: '#/components/schemas/Uint256'
+          description: Последний выделенный ID заявки в смене, включая уже неактивные заявки
+    Portfolio:
+      type: object
+      additionalProperties: false
+      required: [blockNumber, nativeBalance, balances, aave, uniswap]
+      description: Портфель адреса chain.oreVein в том же блоке, что и fund
+      properties:
+        blockNumber:
+          type: integer
+          minimum: 0
+          description: Совпадает с block.number снимка
+        nativeBalance:
+          type: object
+          additionalProperties: false
+          required: [symbol, decimals, amount]
+          properties:
+            symbol:
+              type: string
+              const: AVAX
+            decimals:
+              type: integer
+              const: 18
+            amount:
+              $ref: '#/components/schemas/Units'
+              description: Баланс AVAX в wei
+        balances:
+          type: array
+          description: Балансы настроенных ERC-20 токенов; по умолчанию WAVAX, BTC.b, USDT, USDC
+          items:
+            $ref: '#/components/schemas/TokenBalance'
+        aave:
+          $ref: '#/components/schemas/Aave'
+        uniswap:
+          $ref: '#/components/schemas/Uniswap'
+    TokenBalance:
+      type: object
+      required: [symbol, address, decimals, amount]
+      properties:
+        symbol:
+          type: string
+          minLength: 1
+        address:
+          $ref: '#/components/schemas/Address'
+          description: Адрес базового ERC-20 токена, а не aToken или debtToken
+        decimals:
+          type: integer
+          minimum: 0
+          maximum: 255
+        amount:
+          $ref: '#/components/schemas/Units'
+          description: Сумма в минимальных единицах токена
+    AaveDebt:
+      allOf:
+        - $ref: '#/components/schemas/TokenBalance'
+        - type: object
+          required: [variableDebt, stableDebt]
+          properties:
+            variableDebt:
+              $ref: '#/components/schemas/Units'
+              description: Долг с плавающей ставкой и начисленными процентами, в минимальных единицах
+            stableDebt:
+              $ref: '#/components/schemas/Units'
+              description: Долг со стабильной ставкой и начисленными процентами, в минимальных единицах
+      unevaluatedProperties: false
+      description: Поле amount равно variableDebt + stableDebt
+    Aave:
+      type: object
+      additionalProperties: false
+      required: [supplies, debts, healthFactor]
+      properties:
+        supplies:
+          type: array
+          description: Вклады с начисленными процентами на выбранный блок; по умолчанию WAVAX и BTC.b
+          items:
+            $ref: '#/components/schemas/TokenBalance'
+        debts:
+          type: array
+          description: Долги с начисленными процентами на выбранный блок; по умолчанию USDT и USDC
+          items:
+            $ref: '#/components/schemas/AaveDebt'
+        healthFactor:
+          description: Health Factor без масштабирования; null, если общий долг в Aave равен нулю
+          anyOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+    Uniswap:
+      type: object
+      additionalProperties: false
+      required: [pools, positions]
+      properties:
+        pools:
+          type: array
+          description: Настроенные пары; по умолчанию WAVAX/USDC и BTC.b/USDC с fee 500
+          items:
+            $ref: '#/components/schemas/Pool'
+        positions:
+          type: array
+          description: NFT-позиции OreVein в настроенных и инициализированных пулах; позиции других пар не включаются
+          items:
+            $ref: '#/components/schemas/UniswapPosition'
+    Pool:
+      type: object
+      additionalProperties: false
+      required: [baseSymbol, quoteSymbol, fee, address, price]
+      properties:
+        baseSymbol:
+          type: string
+          minLength: 1
+          examples: [WAVAX]
+        quoteSymbol:
+          type: string
+          minLength: 1
+          examples: [USDC]
+        fee:
+          $ref: '#/components/schemas/PoolFee'
+        address:
+          description: Адрес пула; null, если фабрика не нашла пул
+          anyOf:
+            - $ref: '#/components/schemas/Address'
+            - type: 'null'
+        price:
+          description: Цена единицы base в quote; null, если пул отсутствует или не инициализирован
+          anyOf:
+            - $ref: '#/components/schemas/Decimal'
+            - type: 'null'
+    PoolFee:
+      type: integer
+      minimum: 1
+      maximum: 999999
+      description: Комиссия в миллионных долях; 500 = 0,05%
+      examples: [500]
+    PairAmounts:
+      type: object
+      additionalProperties: false
+      required: [base, quote]
+      description: Суммы двух активов в их минимальных единицах; decimals определяются по символам в portfolio.balances
+      properties:
+        base:
+          $ref: '#/components/schemas/Units'
+        quote:
+          $ref: '#/components/schemas/Units'
+    UniswapPosition:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          tokenId,
+          pool,
+          baseSymbol,
+          quoteSymbol,
+          fee,
+          liquidity,
+          range,
+          inRange,
+          price,
+          amounts,
+          newlyAccruedFees,
+          storedOwed,
+          totalCollectable,
+        ]
+      properties:
+        tokenId:
+          $ref: '#/components/schemas/Units'
+          description: ID NFT в Uniswap V3 NonfungiblePositionManager
+        pool:
+          $ref: '#/components/schemas/Address'
+        baseSymbol:
+          type: string
+          minLength: 1
+        quoteSymbol:
+          type: string
+          minLength: 1
+        fee:
+          $ref: '#/components/schemas/PoolFee'
+        liquidity:
+          $ref: '#/components/schemas/Units'
+          description: Ликвидность позиции из контракта, не сумма токенов
+        range:
+          type: object
+          additionalProperties: false
+          required: [lowerPrice, upperPrice, fullRange]
+          properties:
+            lowerPrice:
+              $ref: '#/components/schemas/Decimal'
+              description: Нижняя цена base в единицах quote
+            upperPrice:
+              $ref: '#/components/schemas/Decimal'
+              description: Верхняя цена base в единицах quote
+            fullRange:
+              type: boolean
+              description: Диапазон занимает все допустимые тики с учётом шага пула
+        inRange:
+          type: boolean
+          description: Ликвидность положительна и текущий tick лежит в диапазоне позиции (нижний включён, верхний исключён)
+        price:
+          $ref: '#/components/schemas/Decimal'
+          description: Текущая цена единицы base в quote
+        amounts:
+          $ref: '#/components/schemas/PairAmounts'
+          description: Активы в действующей ликвидности позиции
+        newlyAccruedFees:
+          $ref: '#/components/schemas/PairAmounts'
+          description: Комиссии после последнего обновления учёта NFT-позиции
+        storedOwed:
+          $ref: '#/components/schemas/PairAmounts'
+          description: Уже записанные в tokensOwed суммы; могут включать старые комиссии и выведенный, но не полученный капитал
+        totalCollectable:
+          $ref: '#/components/schemas/PairAmounts'
+          description: storedOwed + newlyAccruedFees для каждого актива; может включать капитал, поэтому это не только комиссии

@@ -12,9 +12,10 @@
     "dev": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
-    "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "docs:lint": "redocly lint swagger/openapi.yml && prettier --check swagger .github redocly.yaml",
+    "check": "npm run typecheck && npm run lint && npm run docs:lint && npm test && npm run build",
     "key:generate": "tsx src/cli/key.ts"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@redocly/cli": "2.77.0",
     "@types/node": "^24.0.0",
     "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.0",
