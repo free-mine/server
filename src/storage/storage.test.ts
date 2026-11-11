@@ -12,14 +12,12 @@ import {
   writeFile,
 } from 'node:fs/promises'
 
+import { ZodError } from 'zod'
+
 import type { JsonObject } from './types.js'
 import { TransactionStore } from './transactions.js'
 import { atomicWrite, readOptional } from './files.js'
-import {
-  StorageConflictError,
-  StorageValidationError,
-  StorageUnavailableError,
-} from './errors.js'
+import { StorageConflictError, StorageUnavailableError } from './errors.js'
 
 async function temporaryDirectory(context: TestContext): Promise<string> {
   const parent = resolve(tmpdir())
@@ -138,13 +136,10 @@ test('invalid input cannot create records or alter persisted data', async contex
   const directory = await temporaryDirectory(context)
   const store = await TransactionStore.open(directory)
   for (const id of ['', '../escape', 'a/b', 'a\n', 'a'.repeat(129)]) {
-    await assert.rejects(store.put(id, {}, null), StorageValidationError)
+    await assert.rejects(store.put(id, {}, null), ZodError)
   }
   for (const revision of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-    await assert.rejects(
-      store.put('record', {}, revision),
-      StorageValidationError,
-    )
+    await assert.rejects(store.put('record', {}, revision), ZodError)
   }
   for (const data of [
     [],
@@ -152,10 +147,7 @@ test('invalid input cannot create records or alter persisted data', async contex
     { amount: NaN },
     { nested: { amount: undefined } },
   ]) {
-    await assert.rejects(
-      store.put('record', data as unknown as JsonObject, null),
-      StorageValidationError,
-    )
+    await assert.rejects(store.put('record', data, null), ZodError)
   }
   assert.deepEqual(store.list(), [])
   assert.equal(

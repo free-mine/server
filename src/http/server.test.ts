@@ -57,16 +57,9 @@ async function setup(context: TestContext, populated = true) {
   return { app, config, snapshots, transactions, sync, calls, directory }
 }
 
-test('before initial synchronization health stays available and data report unavailable', async context => {
+test('before initial synchronization status stays available and data report unavailable', async context => {
   const { app } = await setup(context, false)
-  assert.equal((await app.inject('/health')).statusCode, 200)
-  for (const url of [
-    '/ready',
-    '/v1/state',
-    '/v1/fund',
-    '/v1/portfolio',
-    '/v1/backup',
-  ]) {
+  for (const url of ['/v1/state', '/v1/backup']) {
     assert.equal((await app.inject(url)).statusCode, 503, url)
   }
   const status = await app.inject('/v1/status')
@@ -87,15 +80,6 @@ test('public state, successors and gzip backup need no key and exclude private r
   assert.deepEqual(state.json(), snapshots.snapshot)
   assert.equal(state.json().fund.oreVein.successors[successor], '2000000000')
 
-  const fund = await app.inject('/v1/fund')
-  assert.equal(fund.statusCode, 200)
-  assert.equal(fund.json().data.oreVein.successors[successor], '2000000000')
-  assert.deepEqual(fund.json().block, snapshots.snapshot?.block)
-  const portfolio = await app.inject('/v1/portfolio')
-  assert.equal(portfolio.statusCode, 200)
-  assert.deepEqual(portfolio.json().data, snapshots.snapshot?.portfolio)
-  assert.deepEqual(portfolio.json().block, snapshots.snapshot?.block)
-
   const backup = await app.inject('/v1/backup')
   assert.equal(backup.statusCode, 200)
   assert.equal(backup.headers['content-type'], 'application/gzip')
@@ -110,7 +94,6 @@ test('public state, successors and gzip backup need no key and exclude private r
     assert.equal(json.includes(secret), false)
     assert.equal(state.body.includes(secret), false)
   }
-  assert.equal((await app.inject('/ready')).statusCode, 200)
 })
 
 test('all transaction and refresh routes authenticate before accessing data or starting work', async context => {

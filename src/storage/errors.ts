@@ -1,10 +1,3 @@
-export class StorageValidationError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'StorageValidationError'
-  }
-}
-
 export class StorageConflictError extends Error {
   constructor() {
     super('The transaction revision has changed')

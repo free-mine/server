@@ -1,13 +1,13 @@
 import { FetchRequest, JsonRpcProvider } from 'ethers'
 
 import { SyncService } from './sync/index.js'
-import { loadConfig } from './config/index.js'
 import { createServer } from './http/index.js'
 import { SnapshotStore } from './snapshot/index.js'
 import { TransactionStore } from './storage/index.js'
+import { loadConfig, RpcConfigurationError } from './config/index.js'
 
 async function start() {
-  const config = await loadConfig()
+  const config = loadConfig()
   const request = new FetchRequest(config.rpcUrl)
   request.timeout = config.rpcTimeoutMs
   const provider = new JsonRpcProvider(request, undefined, {
@@ -58,9 +58,11 @@ async function start() {
   }
 }
 
-void start().catch(() => {
-  process.stderr.write(
-    'Server startup failed. Check configuration, data files and port availability.\n',
-  )
+void start().catch((error: unknown) => {
+  const message =
+    error instanceof RpcConfigurationError
+      ? error.message
+      : 'Server startup failed. Check data files and port availability.'
+  process.stderr.write(`${message}\n`)
   process.exitCode = 1
 })

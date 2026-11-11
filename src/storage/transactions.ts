@@ -1,10 +1,9 @@
 import { join } from 'node:path'
 
 import { atomicWrite, readOptional } from './files.js'
+import type { TransactionFile, TransactionRecord } from './types.js'
 import { StorageConflictError, StorageUnavailableError } from './errors.js'
-import type { JsonObject, TransactionFile, TransactionRecord } from './types.js'
 import {
-  validateInput,
   transactionIdSchema,
   transactionDataSchema,
   transactionFileSchema,
@@ -36,20 +35,20 @@ export class TransactionStore {
 
   get(id: string): TransactionRecord | undefined {
     this.assertAvailable()
-    validateInput(transactionIdSchema, id)
+    transactionIdSchema.parse(id)
     const record = this.state.records.find(record => record.id === id)
     return record ? structuredClone(record) : undefined
   }
 
   async put(
     id: string,
-    data: JsonObject,
+    data: unknown,
     expectedRevision: number | null,
   ): Promise<TransactionRecord> {
-    validateInput(transactionIdSchema, id)
-    const parsed = validateInput(transactionDataSchema, data)
+    transactionIdSchema.parse(id)
+    const parsed = transactionDataSchema.parse(data)
     if (expectedRevision !== null) {
-      validateInput(transactionRevisionSchema, expectedRevision)
+      transactionRevisionSchema.parse(expectedRevision)
     }
 
     return this.serialize(async () => {
@@ -82,8 +81,8 @@ export class TransactionStore {
   }
 
   async delete(id: string, expectedRevision: number): Promise<void> {
-    validateInput(transactionIdSchema, id)
-    validateInput(transactionRevisionSchema, expectedRevision)
+    transactionIdSchema.parse(id)
+    transactionRevisionSchema.parse(expectedRevision)
 
     return this.serialize(async () => {
       this.assertAvailable()

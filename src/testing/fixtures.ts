@@ -1,21 +1,18 @@
 import { join } from 'node:path'
 
-import { defaultChain } from '../config/index.js'
 import { chainIdentity } from '../snapshot/index.js'
 import type { ServerConfig } from '../config/index.js'
 import type { PublicSnapshot } from '../snapshot/index.js'
+import { settings, defaultChain } from '../config/index.js'
 
 export function makeConfig(directory: string): ServerConfig {
   return {
+    ...settings,
     chain: structuredClone(defaultChain),
     rpcUrl: 'http://localhost:8545',
     host: '127.0.0.1',
-    port: 3000,
     dataDir: directory,
     ownerKeyHashFile: join(directory, 'owner-key.sha256'),
-    syncIntervalMs: 3_600_000,
-    logBatchSize: 2000,
-    rpcTimeoutMs: 30_000,
   }
 }
 

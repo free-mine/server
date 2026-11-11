@@ -15,9 +15,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "check": "npm run typecheck && npm run lint && npm test && npm run build",
-    "key:generate": "tsx --env-file-if-exists=.env src/cli/key.ts",
-    "backup:restore": "tsx --env-file-if-exists=.env src/cli/restore.ts",
-    "config:print": "tsx src/cli/config.ts"
+    "key:generate": "tsx src/cli/key.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

@@ -6,8 +6,7 @@ import type { PublicSnapshot } from '../snapshot/index.js'
 
 export class SyncService {
   private active?: Promise<PublicSnapshot>
-  private statusValue: SyncStatus = {
-    running: false,
+  private statusValue: Omit<SyncStatus, 'running'> = {
     lastAttemptAt: null,
     lastError: null,
   }
@@ -15,7 +14,7 @@ export class SyncService {
   constructor(private readonly options: SyncOptions) {}
 
   get status(): SyncStatus {
-    return { ...this.statusValue }
+    return { ...this.statusValue, running: Boolean(this.active) }
   }
 
   // Startup, the timer, and owner requests share one update and one commit.
@@ -24,7 +23,6 @@ export class SyncService {
       return this.active
     }
     this.statusValue = {
-      running: true,
       lastAttemptAt: new Date().toISOString(),
       lastError: null,
     }
@@ -36,7 +34,6 @@ export class SyncService {
         throw error
       })
       .finally(() => {
-        this.statusValue.running = false
         this.active = undefined
       })
     return this.active
@@ -120,7 +117,6 @@ export class SyncService {
       fund: fund.value,
       portfolio: portfolio.value,
     }
-    await snapshots.save(snapshot)
-    return snapshots.snapshot ?? snapshot
+    return snapshots.save(snapshot)
   }
 }

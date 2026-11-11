@@ -1,4 +1,6 @@
-import type { ChainConfig } from './types.js'
+import { resolve } from 'node:path'
+
+import type { ChainConfig, ServerConfig } from './types.js'
 
 export const defaultChain: ChainConfig = {
   chainId: 43114,
@@ -42,4 +44,15 @@ export const defaultChain: ChainConfig = {
     { baseSymbol: 'WAVAX', quoteSymbol: 'USDC', fee: 500 },
     { baseSymbol: 'BTC.b', quoteSymbol: 'USDC', fee: 500 },
   ],
+}
+
+export const settings: Omit<ServerConfig, 'rpcUrl'> = {
+  chain: defaultChain,
+  host: '0.0.0.0',
+  port: 3000,
+  dataDir: resolve('data'),
+  ownerKeyHashFile: resolve('data/owner-key.sha256'),
+  syncIntervalMs: 3_600_000,
+  logBatchSize: 2000,
+  rpcTimeoutMs: 30_000,
 }

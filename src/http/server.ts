@@ -7,22 +7,14 @@ import type { HttpOptions } from './types.js'
 import { verifyOwnerKey } from '../auth/index.js'
 import {
   StorageConflictError,
-  StorageValidationError,
   StorageUnavailableError,
 } from '../storage/index.js'
 
 const transactionParams = z.object({ id: z.string() })
-const transactionData = z.record(z.string(), z.json())
 
-function revision(
-  request: FastifyRequest,
-  allowCreate: boolean,
-): number | null {
+function revision(request: FastifyRequest): number {
   const match = request.headers['if-match']
   const noneMatch = request.headers['if-none-match']
-  if (allowCreate && noneMatch === '*' && match === undefined) {
-    return null
-  }
   if (
     noneMatch !== undefined ||
     typeof match !== 'string' ||
@@ -62,10 +54,7 @@ export function createServer(options: HttpOptions) {
           'Revision changed or record does not exist; read the current record and retry',
       })
     }
-    if (
-      error instanceof z.ZodError ||
-      error instanceof StorageValidationError
-    ) {
+    if (error instanceof z.ZodError) {
       return reply.code(400).send({ error: 'Invalid request data' })
     }
     if (error instanceof StorageUnavailableError) {
@@ -92,12 +81,6 @@ export function createServer(options: HttpOptions) {
     return reply.code(500).send({ error: 'Internal server error' })
   })
 
-  app.get('/health', () => ({ status: 'ok' }))
-  app.get('/ready', (_request, reply) => {
-    return reply
-      .code(snapshots.snapshot ? 200 : 503)
-      .send({ ready: Boolean(snapshots.snapshot) })
-  })
   app.get('/v1/status', () => ({
     ...sync.status,
     block: snapshots.snapshot?.block ?? null,
@@ -108,26 +91,6 @@ export function createServer(options: HttpOptions) {
     const snapshot = snapshots.snapshot
     return snapshot
       ? reply.header('Cache-Control', 'no-cache').send(snapshot)
-      : reply
-          .code(503)
-          .send({ error: 'Initial synchronization has not completed' })
-  })
-  app.get('/v1/fund', (_request, reply) => {
-    const snapshot = snapshots.snapshot
-    return snapshot
-      ? reply
-          .header('Cache-Control', 'no-cache')
-          .send({ block: snapshot.block, data: snapshot.fund })
-      : reply
-          .code(503)
-          .send({ error: 'Initial synchronization has not completed' })
-  })
-  app.get('/v1/portfolio', (_request, reply) => {
-    const snapshot = snapshots.snapshot
-    return snapshot
-      ? reply
-          .header('Cache-Control', 'no-cache')
-          .send({ block: snapshot.block, data: snapshot.portfolio })
       : reply
           .code(503)
           .send({ error: 'Initial synchronization has not completed' })
@@ -181,12 +144,12 @@ export function createServer(options: HttpOptions) {
     })
     owner.put('/v1/transactions/:id', async (request, reply) => {
       const { id } = transactionParams.parse(request.params)
-      const expected = revision(request, true)
-      const record = await transactions.put(
-        id,
-        transactionData.parse(request.body),
-        expected,
-      )
+      const expected =
+        request.headers['if-none-match'] === '*' &&
+        request.headers['if-match'] === undefined
+          ? null
+          : revision(request)
+      const record = await transactions.put(id, request.body, expected)
       return reply
         .code(expected === null ? 201 : 200)
         .header('ETag', `"${record.revision}"`)
@@ -194,11 +157,7 @@ export function createServer(options: HttpOptions) {
     })
     owner.delete('/v1/transactions/:id', async (request, reply) => {
       const { id } = transactionParams.parse(request.params)
-      const expected = revision(request, false)
-      if (expected === null) {
-        throw new StorageValidationError('A revision is required for deletion')
-      }
-      await transactions.delete(id, expected)
+      await transactions.delete(id, revision(request))
       return reply.code(204).send()
     })
   })

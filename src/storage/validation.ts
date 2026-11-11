@@ -1,7 +1,5 @@
 import { z } from 'zod'
 
-import { StorageValidationError } from './errors.js'
-
 export const transactionIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
@@ -43,13 +41,3 @@ export const transactionFileSchema = z
       revisions.add(record.revision)
     }
   })
-
-export function validateInput<T>(schema: z.ZodType<T>, value: unknown): T {
-  const result = schema.safeParse(value)
-  if (!result.success) {
-    throw new StorageValidationError(
-      'Invalid transaction ID, revision, or JSON object',
-    )
-  }
-  return result.data
-}

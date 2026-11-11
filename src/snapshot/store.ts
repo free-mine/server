@@ -73,5 +73,6 @@ export class SnapshotStore {
     await atomicWrite(this.path, compressed)
     this.current = snapshot
     this.compressed = compressed
+    return snapshot
   }
 }
