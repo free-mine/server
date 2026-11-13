@@ -36,4 +36,5 @@ export interface ServerConfig {
   rpcTimeoutMs: number
   syncIntervalMs: number
   ownerKeyHashFile: string
+  syncRetryIntervalMs: number
 }

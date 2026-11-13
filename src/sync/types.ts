@@ -18,3 +18,10 @@ export interface SyncStatus {
   lastError: string | null
   lastAttemptAt: string | null
 }
+
+export interface SyncLoopOptions {
+  intervalMs: number
+  onError: () => void
+  retryIntervalMs: number
+  refresh: () => Promise<unknown>
+}

@@ -1,8 +1,8 @@
 import { setTimeout } from 'node:timers/promises'
 
-import type { Log, Provider } from 'ethers'
+import type { Provider } from 'ethers'
 
-import type { RetryDelay } from './types.js'
+import type { LogBatch, RetryDelay } from './types.js'
 
 // Ethers wraps HTTP status and JSON-RPC messages at different nesting levels.
 // Inspect only error fields; never log the request or its credential-bearing URL.
@@ -47,7 +47,7 @@ function failureKind(error: unknown) {
     return 'transient'
   }
   if (
-    /range.{0,40}(?:too large|too wide|exceed|limit)|too many blocks|query returned more than|response size|result(?:s| set)? (?:size|limit|too large)|(?:limit|maximum).{0,40}(?:range|logs|blocks)/i.test(
+    /range.{0,40}(?:too large|too wide|exceed|limit)|too many blocks|query returned more than|response size|result(?:s| set)? (?:size|limit|too large)|(?:limit|maximum).{0,40}(?:range|logs|blocks)|up to (?:a )?[\d,]+ blocks? range/i.test(
       message,
     )
   ) {
@@ -56,41 +56,53 @@ function failureKind(error: unknown) {
   return 'permanent'
 }
 
-export async function fetchRange(
+function smallerRange(error: unknown, currentSize: number): number {
+  const message = errorText(error)
+  const advertised =
+    /up to (?:a )?([\d,]+) blocks? range/i.exec(message) ??
+    /maximum of ([\d,]+) blocks?\b/i.exec(message)
+  const limit = Number(advertised?.[1]?.replaceAll(',', ''))
+  return Number.isSafeInteger(limit) && limit > 0 && limit < currentSize
+    ? limit
+    : Math.max(1, Math.floor(currentSize / 2))
+}
+
+export async function* fetchLogBatches(
   provider: Provider,
   addresses: string[],
   fromBlock: number,
   toBlock: number,
+  batchSize: number,
   delay: RetryDelay = setTimeout,
-): Promise<Log[]> {
-  for (let attempt = 0; ; attempt++) {
+): AsyncGenerator<LogBatch> {
+  let start = fromBlock
+  let rangeSize = batchSize
+  let retries = 0
+  while (start <= toBlock) {
+    const end = Math.min(start + rangeSize - 1, toBlock)
+    let logs
     try {
-      return await provider.getLogs({ address: addresses, fromBlock, toBlock })
+      logs = await provider.getLogs({
+        address: addresses,
+        fromBlock: start,
+        toBlock: end,
+      })
     } catch (error) {
       const kind = failureKind(error)
-      if (kind === 'transient' && attempt < 3) {
-        await delay(1000 * 2 ** attempt)
+      if (kind === 'transient' && retries < 3) {
+        await delay(1000 * 2 ** retries++)
         continue
       }
-      if (kind !== 'range' || fromBlock === toBlock) {
+      if (kind !== 'range' || start === end) {
         throw error
       }
-      const middle = fromBlock + Math.floor((toBlock - fromBlock) / 2)
-      const first = await fetchRange(
-        provider,
-        addresses,
-        fromBlock,
-        middle,
-        delay,
-      )
-      const second = await fetchRange(
-        provider,
-        addresses,
-        middle + 1,
-        toBlock,
-        delay,
-      )
-      return [...first, ...second]
+      // Keep the learned limit for all following batches in this replay.
+      rangeSize = smallerRange(error, end - start + 1)
+      retries = 0
+      continue
     }
+    yield { logs, fromBlock: start, toBlock: end }
+    start = end + 1
+    retries = 0
   }
 }

@@ -1,3 +1,5 @@
+import type { Log } from 'ethers'
+
 export interface FundClaim {
   miner: string
   shiftId: string
@@ -52,3 +54,9 @@ export interface EventState {
 }
 
 export type RetryDelay = (milliseconds: number) => Promise<void>
+
+export interface LogBatch {
+  logs: Log[]
+  toBlock: number
+  fromBlock: number
+}

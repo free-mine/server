@@ -1,9 +1,9 @@
 import { FetchRequest, JsonRpcProvider } from 'ethers'
 
-import { SyncService } from './sync/index.js'
 import { createServer } from './http/index.js'
 import { SnapshotStore } from './snapshot/index.js'
 import { TransactionStore } from './storage/index.js'
+import { SyncService, startSyncLoop } from './sync/index.js'
 import { loadConfig, RpcConfigurationError } from './config/index.js'
 
 async function start() {
@@ -28,24 +28,19 @@ async function start() {
     })
     await app.listen({ port: config.port, host: config.host })
 
-    const refresh = () => {
-      void sync
-        .refresh()
-        .catch(() =>
-          app.log.warn(
-            'Synchronization failed; previous snapshot retained. See /v1/status.',
-          ),
-        )
-    }
-    refresh()
-    const timer = setInterval(refresh, config.syncIntervalMs)
+    const stopSyncLoop = startSyncLoop({
+      refresh: () => sync.refresh(),
+      onError: () => app.log.warn(sync.status.lastError),
+      intervalMs: config.syncIntervalMs,
+      retryIntervalMs: config.syncRetryIntervalMs,
+    })
     let stopping = false
     const stop = async () => {
       if (stopping) {
         return
       }
       stopping = true
-      clearInterval(timer)
+      stopSyncLoop()
       await app.close()
       await sync.idle()
       provider.destroy()

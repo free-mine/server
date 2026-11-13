@@ -52,7 +52,8 @@ export const settings: Omit<ServerConfig, 'rpcUrl'> = {
   port: 3000,
   dataDir: resolve('data'),
   ownerKeyHashFile: resolve('data/owner-key.sha256'),
-  syncIntervalMs: 3_600_000,
-  logBatchSize: 2000,
+  syncIntervalMs: 600_000,
+  syncRetryIntervalMs: 60_000,
+  logBatchSize: 10,
   rpcTimeoutMs: 30_000,
 }

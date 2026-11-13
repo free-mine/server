@@ -386,7 +386,6 @@ test('splits oversized RPC log ranges and propagates permanent errors', async ()
       [100, 103],
       [100, 101],
       [102, 103],
-      [104, 107],
       [104, 105],
       [106, 107],
     ],

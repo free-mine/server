@@ -127,11 +127,7 @@ export function createServer(options: HttpOptions) {
       }
     })
     owner.post('/v1/refresh', (_request, reply) => {
-      void sync
-        .refresh()
-        .catch(() =>
-          app.log.warn('Synchronization failed; previous snapshot retained'),
-        )
+      void sync.refresh().catch(() => app.log.warn(sync.status.lastError))
       return reply.code(202).send({ status: 'accepted', ...sync.status })
     })
     owner.get('/v1/transactions', () => ({ records: transactions.list() }))

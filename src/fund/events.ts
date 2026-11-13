@@ -1,7 +1,7 @@
 import { ZeroAddress } from 'ethers'
 import type { Provider } from 'ethers'
 
-import { fetchRange } from './logs.js'
+import { fetchLogBatches } from './logs.js'
 import type { EventState } from './types.js'
 import type { ChainConfig } from '../config/index.js'
 import { oreVeinAbi, freeMineAbi, magicOreAbi } from './abi.js'
@@ -37,14 +37,14 @@ export async function applyEvents(
   const magicOre = config.addresses.magicOre.toLowerCase()
   const freeMine = config.addresses.freeMine.toLowerCase()
   const oreVein = config.addresses.oreVein.toLowerCase()
-  for (let start = fromBlock; start <= toBlock; start += logBatchSize) {
-    const end = Math.min(start + logBatchSize - 1, toBlock)
-    const logs = await fetchRange(
-      provider,
-      [magicOre, freeMine, oreVein],
-      start,
-      end,
-    )
+  for await (const batch of fetchLogBatches(
+    provider,
+    [magicOre, freeMine, oreVein],
+    fromBlock,
+    toBlock,
+    logBatchSize,
+  )) {
+    const { logs } = batch
     logs.sort(
       (left, right) =>
         left.blockNumber - right.blockNumber ||
@@ -52,7 +52,11 @@ export async function applyEvents(
         left.index - right.index,
     )
     for (const log of logs) {
-      if (log.removed || log.blockNumber < start || log.blockNumber > end) {
+      if (
+        log.removed ||
+        log.blockNumber < batch.fromBlock ||
+        log.blockNumber > batch.toBlock
+      ) {
         throw new Error('RPC returned an invalid or removed fund event')
       }
       const address = log.address.toLowerCase()

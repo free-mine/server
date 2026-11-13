@@ -321,6 +321,7 @@ test('invalid transaction data and oversized request bodies are rejected without
 
 test('manual refresh returns immediately and public status hides RPC credentials after failure', async context => {
   const { app, sync, calls, snapshots } = await setup(context)
+  const warning = context.mock.method(app.log, 'warn', () => {})
   const previous = snapshots.snapshot
   const response = await app.inject({
     method: 'POST',
@@ -333,8 +334,12 @@ test('manual refresh returns immediately and public status hides RPC credentials
   const status = await app.inject('/v1/status')
   assert.equal(status.statusCode, 200)
   assert.equal(status.json().running, false)
-  assert.ok(status.json().lastError)
+  assert.match(status.json().lastError, /RPC network lookup failed/)
   assert.equal(status.body.includes('PRIVATE_RPC_TOKEN'), false)
+  assert.deepEqual(
+    warning.mock.calls.map(call => call.arguments),
+    [[status.json().lastError]],
+  )
   assert.deepEqual((await app.inject('/v1/state')).json(), previous)
 })
 
