@@ -3,7 +3,6 @@ import type { FeeGrowthInput } from './types.js'
 export const Q96 = 1n << 96n
 export const Q128 = 1n << 128n
 const Q192 = 1n << 192n
-const UINT256 = 1n << 256n
 
 // Decimal display only: truncate, retaining at least 36 significant fractional
 // digits even for full-range endpoints. Asset amounts always remain integers.
@@ -63,10 +62,6 @@ export function liquidityAmounts(
   ]
 }
 
-function uint256(value: bigint): bigint {
-  return ((value % UINT256) + UINT256) % UINT256
-}
-
 // Fee growth is uint256 and subtraction deliberately wraps in the contracts.
 // https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/Tick.sol
 export function accruedFees(input: FeeGrowthInput): bigint {
@@ -76,11 +71,13 @@ export function accruedFees(input: FeeGrowthInput): bigint {
   const below =
     input.currentTick >= input.lowerTick
       ? input.lowerOutside
-      : uint256(input.global - input.lowerOutside)
+      : BigInt.asUintN(256, input.global - input.lowerOutside)
   const above =
     input.currentTick < input.upperTick
       ? input.upperOutside
-      : uint256(input.global - input.upperOutside)
-  const inside = uint256(input.global - below - above)
-  return (uint256(inside - input.lastInside) * input.liquidity) / Q128
+      : BigInt.asUintN(256, input.global - input.upperOutside)
+  const inside = BigInt.asUintN(256, input.global - below - above)
+  return (
+    (BigInt.asUintN(256, inside - input.lastInside) * input.liquidity) / Q128
+  )
 }

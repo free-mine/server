@@ -58,10 +58,14 @@ export class SyncService {
 
   private async update(): Promise<PublicSnapshot> {
     const { config, provider, snapshots } = this.options
-    const network = await step('RPC network lookup failed.', () =>
-      provider.getNetwork(),
-    )
-    if (network.chainId !== BigInt(config.chain.chainId)) {
+    const chainId = await step('RPC network lookup failed.', async () => {
+      const value: unknown = await provider.send('eth_chainId', [])
+      if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) {
+        throw new Error('RPC returned an invalid chain ID')
+      }
+      return BigInt(value)
+    })
+    if (chainId !== BigInt(config.chain.chainId)) {
       throw new SyncStepError('RPC chain does not match configuration.')
     }
     // Avalanche's latest executed block is accepted/final. Save its hash as

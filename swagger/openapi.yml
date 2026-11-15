@@ -127,7 +127,7 @@ paths:
       description: |
         Содержимое после распаковки — тот же JSON `PublicSnapshot`, что и
         в `/v1/state`. Это файл gzip, а не HTTP Content-Encoding.
-        `Content-Disposition` задаёт имя `free-mine-backup.json.gz`.
+        `Content-Disposition` задаёт имя `public-snapshot.json.gz`.
         Журнал транзакций и хеш ключа владельца не входят в архив.
 
         Для восстановления остановите сервер, сохраните предыдущий файл и
@@ -135,6 +135,8 @@ paths:
         запустите сервер. При старте проверяются формат, сеть, адреса и
         согласованность данных; следующая синхронизация проверит хеш сохранённого
         блока в RPC и продолжит чтение событий после него.
+        Прежнее имя `data/free-mine-backup.json.gz` также поддерживается,
+        если `data/public-snapshot.json.gz` отсутствует.
       responses:
         '200':
           description: Gzip-файл, содержащий JSON по схеме PublicSnapshot
@@ -145,7 +147,7 @@ paths:
               description: Имя скачиваемого файла
               schema:
                 type: string
-                const: 'attachment; filename="free-mine-backup.json.gz"'
+                const: 'attachment; filename="public-snapshot.json.gz"'
           content:
             application/gzip:
               schema:

@@ -4,10 +4,9 @@ import { join } from 'node:path'
 import { strict as assert } from 'node:assert'
 import { rm, mkdtemp } from 'node:fs/promises'
 
-import type { Provider } from 'ethers'
-
 import { SyncService } from './service.js'
 import { defaultChain } from '../config/index.js'
+import type { RpcProvider } from '../rpc/index.js'
 import { SnapshotStore } from '../snapshot/index.js'
 import { makeConfig, makeSnapshot } from '../testing/index.js'
 
@@ -19,7 +18,7 @@ function providerAt(number: number) {
     timestamp: saved.timestamp + 5,
   }
   return {
-    getNetwork: async () => ({ chainId: 43114n }),
+    send: async () => '0xa86a',
     getBlock: async (tag: string | number) =>
       tag === saved.number ? saved : target,
     getTransactionReceipt: async () => ({ status: 1, blockNumber: 50 }),
@@ -39,7 +38,7 @@ test('resume starts after saved block and overlapping refreshes share one atomic
   const service = new SyncService({
     config: makeConfig(directory),
     snapshots,
-    provider: providerAt(105) as unknown as Provider,
+    provider: providerAt(105) as unknown as RpcProvider,
     readFund: async (_provider, _config, previous, from, to) => {
       reads++
       assert.equal(from, 101)
@@ -85,13 +84,13 @@ test('restart catches up the entire offline gap and a failed attempt cannot adva
     timestamp: initial.block.timestamp + number - initial.block.number,
   })
   const provider = {
-    getNetwork: async () => ({ chainId: 43114n }),
+    send: async () => '0xa86a',
     getBlock: async (tag: string | number) =>
       block(tag === 'latest' ? target : Number(tag)),
     getTransactionReceipt: async () => {
       assert.fail('A restart must resume its snapshot, not replay deployment')
     },
-  } as unknown as Provider
+  } as unknown as RpcProvider
 
   for (const fail of [true, false, false]) {
     // Every iteration creates fresh instances, as an actual process restart does.
@@ -165,7 +164,7 @@ test('RPC failure retains last complete snapshot and does not leak provider cred
   const service = new SyncService({
     config: makeConfig(directory),
     snapshots,
-    provider: providerAt(105) as unknown as Provider,
+    provider: providerAt(105) as unknown as RpcProvider,
     readFund: async () => makeSnapshot().fund,
     readPortfolio: async (_provider, _config, blockNumber) => {
       if (fail) {
@@ -201,7 +200,7 @@ test('foreign chain, lagging RPC and changed block hashes cannot advance the cur
   await snapshots.save(makeSnapshot())
   const wrongChain = {
     ...providerAt(105),
-    getNetwork: async () => ({ chainId: 1n }),
+    send: async () => '0x1',
   }
   const wrongHistory = {
     ...providerAt(105),
@@ -215,7 +214,7 @@ test('foreign chain, lagging RPC and changed block hashes cannot advance the cur
     const service = new SyncService({
       config: makeConfig(directory),
       snapshots,
-      provider: provider as unknown as Provider,
+      provider: provider as unknown as RpcProvider,
       readFund: async () => {
         throw new Error('Readers must not run')
       },
@@ -239,7 +238,7 @@ test('initial indexing starts at deployment and includes its events', async t =>
   const service = new SyncService({
     config: makeConfig(directory),
     snapshots,
-    provider: providerAt(105) as unknown as Provider,
+    provider: providerAt(105) as unknown as RpcProvider,
     readFund: async (_provider, _config, previous, from, to) => {
       assert.equal(previous, undefined)
       assert.equal(from, 50)
@@ -265,7 +264,7 @@ test('initial fund indexing failures identify the failing stage without exposing
   const service = new SyncService({
     config: makeConfig(directory),
     snapshots,
-    provider: providerAt(105) as unknown as Provider,
+    provider: providerAt(105) as unknown as RpcProvider,
     readFund: async () => {
       throw cause
     },
@@ -300,7 +299,7 @@ test('snapshot save failures are distinguished from RPC failures', async t => {
   const service = new SyncService({
     config: makeConfig(directory),
     snapshots,
-    provider: providerAt(105) as unknown as Provider,
+    provider: providerAt(105) as unknown as RpcProvider,
     readFund: async () => makeSnapshot().fund,
     readPortfolio: async (_provider, _config, blockNumber) => ({
       ...makeSnapshot().portfolio,

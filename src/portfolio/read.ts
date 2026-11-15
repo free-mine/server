@@ -5,7 +5,6 @@ import { erc20Abi } from './abi.js'
 import { readUniswap } from './uniswap.js'
 import type { PortfolioState } from './types.js'
 import { readAave, tokenBalance } from './aave.js'
-import { portfolioStateSchema } from './schema.js'
 import type { ChainConfig } from '../config/index.js'
 
 export async function readPortfolio(
@@ -33,7 +32,7 @@ export async function readPortfolio(
     readAave(provider, config, blockNumber),
     readUniswap(provider, config, blockNumber),
   ])
-  return portfolioStateSchema.parse({
+  return {
     blockNumber,
     nativeBalance: {
       symbol: 'AVAX',
@@ -43,5 +42,5 @@ export async function readPortfolio(
     balances,
     aave,
     uniswap,
-  })
+  }
 }

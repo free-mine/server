@@ -1,7 +1,6 @@
 import type { Provider, Interface } from 'ethers'
 
 import { applyEvents } from './events.js'
-import { fundStateSchema } from './schema.js'
 import type { ChainConfig } from '../config/index.js'
 import type { FundShift, FundState, EventState } from './types.js'
 import { dollarAbi, oreVeinAbi, freeMineAbi, magicOreAbi } from './abi.js'
@@ -25,14 +24,11 @@ export async function readFund(
   ) {
     throw new Error('Invalid fund indexing block range or log batch size')
   }
-  if (previous) {
-    fundStateSchema.parse(previous)
-  }
   const events: EventState = {
     admins: new Set(previous?.oreVein.admins ?? []),
     holders: { ...previous?.magicOre.holders },
     successors: { ...previous?.oreVein.successors },
-    claims: structuredClone(previous?.freeMine.claims ?? {}),
+    claims: { ...previous?.freeMine.claims },
   }
   await applyEvents(provider, config, events, fromBlock, toBlock, logBatchSize)
 
@@ -125,7 +121,7 @@ export async function readFund(
     }
   }
 
-  return fundStateSchema.parse({
+  return {
     magicOre: {
       name,
       symbol,
@@ -152,5 +148,5 @@ export async function readFund(
       claims: events.claims,
       shifts,
     },
-  })
+  }
 }

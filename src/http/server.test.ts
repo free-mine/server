@@ -7,10 +7,9 @@ import type { TestContext } from 'node:test'
 import { join, dirname, resolve } from 'node:path'
 import { rm, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 
-import type { Provider } from 'ethers'
-
 import { createServer } from './server.js'
 import { SyncService } from '../sync/index.js'
+import type { RpcProvider } from '../rpc/index.js'
 import { SnapshotStore } from '../snapshot/index.js'
 import { TransactionStore } from '../storage/index.js'
 import { makeConfig, makeSnapshot } from '../testing/index.js'
@@ -41,11 +40,11 @@ async function setup(context: TestContext, populated = true) {
   const transactions = await TransactionStore.open(directory)
   const calls = { refresh: 0 }
   const provider = {
-    async getNetwork() {
+    async send() {
       calls.refresh += 1
       throw new Error('PRIVATE_RPC_TOKEN must never appear in API responses')
     },
-  } as unknown as Provider
+  } as unknown as RpcProvider
   const sync = new SyncService({ config, snapshots, provider })
   const app = createServer({ config, snapshots, transactions, sync })
   context.after(async () => {
@@ -94,6 +93,22 @@ test('public state, successors and gzip backup need no key and exclude private r
     assert.equal(json.includes(secret), false)
     assert.equal(state.body.includes(secret), false)
   }
+})
+
+test('a downloaded backup restores using its Content-Disposition filename', async context => {
+  const { app, config, snapshots, directory } = await setup(context)
+  const response = await app.inject('/v1/backup')
+  assert.equal(response.statusCode, 200)
+  const filename = /^attachment; filename="([^"]+)"$/.exec(
+    String(response.headers['content-disposition']),
+  )?.[1]
+  assert.ok(filename)
+  const restoredDirectory = join(directory, 'downloaded-backup')
+  await mkdir(restoredDirectory)
+  await writeFile(join(restoredDirectory, filename), response.rawPayload)
+
+  const restored = await SnapshotStore.open(restoredDirectory, config.chain)
+  assert.deepEqual(restored.snapshot, snapshots.snapshot)
 })
 
 test('all transaction and refresh routes authenticate before accessing data or starting work', async context => {
@@ -292,16 +307,43 @@ test('HTTP transaction writes enforce ETag preconditions and persist the winning
   )
 })
 
+test('malformed and unsafe revision preconditions cannot change a record', async context => {
+  const { app, transactions } = await setup(context)
+  const original = await transactions.put('operation', privatePayload, null)
+  for (const method of ['PUT', 'DELETE'] as const) {
+    for (const [match, expectedStatus] of [
+      ['"0"', 428],
+      ['"01"', 428],
+      ['W/"1"', 428],
+      ['"9007199254740992"', 400],
+      [`"${'9'.repeat(400)}"`, 400],
+    ] as const) {
+      const response = await app.inject({
+        method,
+        url: '/v1/transactions/operation',
+        headers: { authorization, 'if-match': match },
+        ...(method === 'PUT' ? { payload: {} } : {}),
+      })
+      assert.equal(response.statusCode, expectedStatus, `${method} ${match}`)
+      assert.deepEqual(transactions.get('operation'), original)
+    }
+  }
+})
+
 test('invalid transaction data and oversized request bodies are rejected without storing them', async context => {
   const { app, transactions } = await setup(context)
   const headers = { authorization, 'if-none-match': '*' }
-  const invalidId = await app.inject({
-    method: 'PUT',
-    url: '/v1/transactions/invalid%2Fid',
-    headers,
-    payload: {},
-  })
-  assert.equal(invalidId.statusCode, 400)
+  for (const method of ['GET', 'PUT', 'DELETE'] as const) {
+    for (const id of ['invalid%2Fid', 'invalid%0A']) {
+      const invalidId = await app.inject({
+        method,
+        url: `/v1/transactions/${id}`,
+        headers: { authorization, 'if-match': '"1"' },
+        ...(method === 'PUT' ? { payload: {} } : {}),
+      })
+      assert.equal(invalidId.statusCode, 400, `${method} ${id}`)
+    }
+  }
   const invalidData = await app.inject({
     method: 'PUT',
     url: '/v1/transactions/array',

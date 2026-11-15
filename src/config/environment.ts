@@ -13,10 +13,8 @@ export function loadConfig(rpcUrl = process.env.RPC_URL): ServerConfig {
   if (!value) {
     throw new RpcConfigurationError('RPC_URL is required')
   }
-  if (
-    !URL.canParse(value) ||
-    !['http:', 'https:'].includes(new URL(value).protocol)
-  ) {
+  const url = URL.parse(value)
+  if (!url || !['http:', 'https:'].includes(url.protocol)) {
     throw new RpcConfigurationError('RPC_URL must be a valid HTTP or HTTPS URL')
   }
   return { ...settings, rpcUrl: value }
