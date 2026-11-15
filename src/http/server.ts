@@ -1,16 +1,15 @@
-import { z } from 'zod'
 import Fastify from 'fastify'
+import { ZodError } from 'zod'
 import cors from '@fastify/cors'
 import type { FastifyRequest } from 'fastify'
 
-import type { HttpOptions } from './types.js'
 import { verifyOwnerKey } from '../auth/index.js'
+import { snapshotFileName } from '../snapshot/index.js'
+import type { HttpOptions, TransactionRoute } from './types.js'
 import {
   StorageConflictError,
   StorageUnavailableError,
 } from '../storage/index.js'
-
-const transactionParams = z.object({ id: z.string() })
 
 function revision(request: FastifyRequest): number {
   const match = request.headers['if-match']
@@ -27,12 +26,7 @@ function revision(request: FastifyRequest): number {
       { statusCode: 428 },
     )
   }
-  return z
-    .number()
-    .int()
-    .positive()
-    .max(Number.MAX_SAFE_INTEGER)
-    .parse(Number(match.slice(1, -1)))
+  return Number(match.slice(1, -1))
 }
 
 export function createServer(options: HttpOptions) {
@@ -54,7 +48,7 @@ export function createServer(options: HttpOptions) {
           'Revision changed or record does not exist; read the current record and retry',
       })
     }
-    if (error instanceof z.ZodError) {
+    if (error instanceof ZodError) {
       return reply.code(400).send({ error: 'Invalid request data' })
     }
     if (error instanceof StorageUnavailableError) {
@@ -103,7 +97,7 @@ export function createServer(options: HttpOptions) {
           .header('Cache-Control', 'no-cache')
           .header(
             'Content-Disposition',
-            'attachment; filename="free-mine-backup.json.gz"',
+            `attachment; filename="${snapshotFileName}"`,
           )
           .send(data)
       : reply
@@ -131,31 +125,37 @@ export function createServer(options: HttpOptions) {
       return reply.code(202).send({ status: 'accepted', ...sync.status })
     })
     owner.get('/v1/transactions', () => ({ records: transactions.list() }))
-    owner.get('/v1/transactions/:id', (request, reply) => {
-      const { id } = transactionParams.parse(request.params)
+    owner.get<TransactionRoute>('/v1/transactions/:id', (request, reply) => {
+      const { id } = request.params
       const record = transactions.get(id)
       return record
         ? reply.header('ETag', `"${record.revision}"`).send(record)
         : reply.code(404).send({ error: 'Record not found' })
     })
-    owner.put('/v1/transactions/:id', async (request, reply) => {
-      const { id } = transactionParams.parse(request.params)
-      const expected =
-        request.headers['if-none-match'] === '*' &&
-        request.headers['if-match'] === undefined
-          ? null
-          : revision(request)
-      const record = await transactions.put(id, request.body, expected)
-      return reply
-        .code(expected === null ? 201 : 200)
-        .header('ETag', `"${record.revision}"`)
-        .send(record)
-    })
-    owner.delete('/v1/transactions/:id', async (request, reply) => {
-      const { id } = transactionParams.parse(request.params)
-      await transactions.delete(id, revision(request))
-      return reply.code(204).send()
-    })
+    owner.put<TransactionRoute>(
+      '/v1/transactions/:id',
+      async (request, reply) => {
+        const { id } = request.params
+        const expected =
+          request.headers['if-none-match'] === '*' &&
+          request.headers['if-match'] === undefined
+            ? null
+            : revision(request)
+        const record = await transactions.put(id, request.body, expected)
+        return reply
+          .code(expected === null ? 201 : 200)
+          .header('ETag', `"${record.revision}"`)
+          .send(record)
+      },
+    )
+    owner.delete<TransactionRoute>(
+      '/v1/transactions/:id',
+      async (request, reply) => {
+        const { id } = request.params
+        await transactions.delete(id, revision(request))
+        return reply.code(204).send()
+      },
+    )
   })
   return app
 }

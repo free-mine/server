@@ -34,8 +34,7 @@ function errorText(error: unknown, depth = 0): string {
   return messages.join(' ')
 }
 
-function failureKind(error: unknown) {
-  const message = errorText(error)
+function failureKind(message: string) {
   if (/\b40[13]\b|invalid api.?key|unauthorized|forbidden/i.test(message)) {
     return 'permanent'
   }
@@ -56,8 +55,7 @@ function failureKind(error: unknown) {
   return 'permanent'
 }
 
-function smallerRange(error: unknown, currentSize: number): number {
-  const message = errorText(error)
+function smallerRange(message: string, currentSize: number): number {
   const advertised =
     /up to (?:a )?([\d,]+) blocks? range/i.exec(message) ??
     /maximum of ([\d,]+) blocks?\b/i.exec(message)
@@ -88,7 +86,8 @@ export async function* fetchLogBatches(
         toBlock: end,
       })
     } catch (error) {
-      const kind = failureKind(error)
+      const message = errorText(error)
+      const kind = failureKind(message)
       if (kind === 'transient' && retries < 3) {
         await delay(1000 * 2 ** retries++)
         continue
@@ -97,7 +96,7 @@ export async function* fetchLogBatches(
         throw error
       }
       // Keep the learned limit for all following batches in this replay.
-      rangeSize = smallerRange(error, end - start + 1)
+      rangeSize = smallerRange(message, end - start + 1)
       retries = 0
       continue
     }

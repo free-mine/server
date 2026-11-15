@@ -1,19 +1,13 @@
-import { FetchRequest, JsonRpcProvider } from 'ethers'
-
 import { createServer } from './http/index.js'
-import { SnapshotStore } from './snapshot/index.js'
+import { createRpcProvider } from './rpc/index.js'
 import { TransactionStore } from './storage/index.js'
 import { SyncService, startSyncLoop } from './sync/index.js'
+import { SnapshotStore, snapshotFileName } from './snapshot/index.js'
 import { loadConfig, RpcConfigurationError } from './config/index.js'
 
 async function start() {
   const config = loadConfig()
-  const request = new FetchRequest(config.rpcUrl)
-  request.timeout = config.rpcTimeoutMs
-  const provider = new JsonRpcProvider(request, undefined, {
-    cacheTimeout: -1,
-    batchMaxCount: 20,
-  })
+  const provider = createRpcProvider(config)
 
   try {
     const snapshots = await SnapshotStore.open(config.dataDir, config.chain)
@@ -28,6 +22,23 @@ async function start() {
     })
     await app.listen({ port: config.port, host: config.host })
 
+    if (snapshots.snapshot) {
+      app.log.info(
+        {
+          dataDir: config.dataDir,
+          block: snapshots.snapshot.block.number,
+          blockTimestamp: snapshots.snapshot.block.timestamp,
+          updatedAt: snapshots.snapshot.updatedAt,
+        },
+        'Restored public snapshot',
+      )
+    } else {
+      app.log.warn(
+        { dataDir: config.dataDir, filename: snapshotFileName },
+        'No public snapshot found; indexing full history from deployment',
+      )
+    }
+
     const stopSyncLoop = startSyncLoop({
       refresh: () => sync.refresh(),
       onError: () => app.log.warn(sync.status.lastError),
@@ -41,12 +52,22 @@ async function start() {
       }
       stopping = true
       stopSyncLoop()
-      await app.close()
-      await sync.idle()
-      provider.destroy()
+      try {
+        await app.close()
+      } finally {
+        // Stop RPC replay before waiting; initial indexing may take hours.
+        provider.destroy()
+        await sync.idle()
+      }
     }
-    process.once('SIGINT', () => void stop())
-    process.once('SIGTERM', () => void stop())
+    const onSignal = () => {
+      void stop().catch(() => {
+        app.log.error('Server shutdown failed')
+        process.exitCode = 1
+      })
+    }
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
   } catch (error) {
     provider.destroy()
     throw error

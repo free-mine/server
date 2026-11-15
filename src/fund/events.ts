@@ -34,12 +34,14 @@ export async function applyEvents(
   toBlock: number,
   logBatchSize: number,
 ) {
-  const magicOre = config.addresses.magicOre.toLowerCase()
-  const freeMine = config.addresses.freeMine.toLowerCase()
-  const oreVein = config.addresses.oreVein.toLowerCase()
+  const contracts = new Map([
+    [config.addresses.magicOre.toLowerCase(), magicOreAbi],
+    [config.addresses.freeMine.toLowerCase(), freeMineAbi],
+    [config.addresses.oreVein.toLowerCase(), oreVeinAbi],
+  ])
   for await (const batch of fetchLogBatches(
     provider,
-    [magicOre, freeMine, oreVein],
+    [...contracts.keys()],
     fromBlock,
     toBlock,
     logBatchSize,
@@ -59,15 +61,7 @@ export async function applyEvents(
       ) {
         throw new Error('RPC returned an invalid or removed fund event')
       }
-      const address = log.address.toLowerCase()
-      const abi =
-        address === magicOre
-          ? magicOreAbi
-          : address === freeMine
-            ? freeMineAbi
-            : address === oreVein
-              ? oreVeinAbi
-              : undefined
+      const abi = contracts.get(log.address.toLowerCase())
       if (!abi) {
         throw new Error('RPC returned a log from an unexpected contract')
       }

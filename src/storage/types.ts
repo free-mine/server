@@ -1,19 +1,10 @@
-export type JsonValue =
-  null | boolean | number | string | JsonValue[] | JsonObject
+import type { z } from 'zod'
 
-export interface JsonObject {
-  [key: string]: JsonValue
-}
+import type {
+  transactionDataSchema,
+  transactionFileSchema,
+} from './validation.js'
 
-export interface TransactionRecord {
-  id: string
-  revision: number
-  data: JsonObject
-  updatedAt: string
-}
-
-export interface TransactionFile {
-  format: 1
-  nextRevision: number
-  records: TransactionRecord[]
-}
+export type JsonObject = z.infer<typeof transactionDataSchema>
+export type TransactionFile = z.infer<typeof transactionFileSchema>
+export type TransactionRecord = TransactionFile['records'][number]

@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type { ChainConfig, ServerConfig } from './types.js'
 
@@ -46,12 +46,14 @@ export const defaultChain: ChainConfig = {
   ],
 }
 
+const dataDir = resolve('data')
+
 export const settings: Omit<ServerConfig, 'rpcUrl'> = {
   chain: defaultChain,
   host: '0.0.0.0',
   port: 3000,
-  dataDir: resolve('data'),
-  ownerKeyHashFile: resolve('data/owner-key.sha256'),
+  dataDir,
+  ownerKeyHashFile: join(dataDir, 'owner-key.sha256'),
   syncIntervalMs: 600_000,
   syncRetryIntervalMs: 60_000,
   logBatchSize: 10,

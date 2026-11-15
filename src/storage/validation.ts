@@ -3,7 +3,6 @@ import { z } from 'zod'
 export const transactionIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
-  .refine(value => value.trim() === value)
 
 export const transactionRevisionSchema = z.number().int().positive().safe()
 export const transactionDataSchema = z.record(z.string(), z.json())

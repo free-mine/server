@@ -1,5 +1,8 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import { z } from 'zod'
 
+import type { PublicSnapshot } from './types.js'
 import { fundStateSchema } from '../fund/index.js'
 import type { ChainConfig } from '../config/index.js'
 import { portfolioStateSchema } from '../portfolio/index.js'
@@ -56,6 +59,17 @@ export const snapshotSchema = z
       })
     }
   })
+
+export function parseSnapshot(
+  value: unknown,
+  chain: ChainConfig,
+): PublicSnapshot {
+  const snapshot = snapshotSchema.parse(value)
+  if (!isDeepStrictEqual(snapshot.chain, chainIdentity(chain))) {
+    throw new Error('Snapshot belongs to a different chain or deployment')
+  }
+  return snapshot
+}
 
 export function chainIdentity(config: ChainConfig) {
   return {

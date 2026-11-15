@@ -10,3 +10,7 @@ export interface HttpOptions {
   snapshots: SnapshotStore
   transactions: TransactionStore
 }
+
+export interface TransactionRoute {
+  Params: { id: string }
+}

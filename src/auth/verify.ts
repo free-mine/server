@@ -5,9 +5,8 @@ export async function verifyOwnerKey(
   header: string | undefined,
   hashFile: string,
 ): Promise<boolean> {
-  const match = /^Bearer ([\x21-\x7e]+)$/i.exec(header ?? '')
-  const key = match?.[1]
-  if (!key || match?.[0] !== header) {
+  const key = /^Bearer ([\x21-\x7e]+)$/i.exec(header ?? '')?.[1]
+  if (!key) {
     return false
   }
 
